@@ -5,3 +5,4 @@ __pycache__/
 data/
 samples/ui-*.png
 .DS_Store
+samples/ui-*.png

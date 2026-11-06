@@ -4,7 +4,34 @@ Point it at a document, tell it what to pull out, get clean JSON back with a
 confidence score for every field. Everything runs on your Mac: OCR on CPU,
 the LLM through your own Ollama install. Nothing leaves the machine.
 
-![Docufy](samples/ui-9-final.png)
+![Docufy](docs/screenshot-results.png)
+
+## How this was built
+
+Docufy came from **one prompt**: a description of the whole product. From that,
+the agent designed the architecture, wrote both halves of the app, ran its own
+tests in a real browser, found its own bugs, and fixed them — without any
+further product direction.
+
+Built with **DeepSeek V4.1 Flash 1017** in [Factory](https://factory.ai).
+
+What that build loop actually involved:
+
+- Picked the stack (FastAPI + RapidOCR + Ollama, dependency-free frontend)
+- Caught an OCR bug its own testing exposed — normalised box heights floored at
+  `1.0` collapsed an entire page into a single line of text
+- Rewrote the evidence highlighter after finding the first version matched
+  nothing
+- Fixed several syntax errors before they shipped
+- Verified end to end: upload, OCR, extraction, type coercion, error paths
+
+The only product changes after the opening prompt were two features asked for
+later (the pass-threshold slider and the model self-check) and a handful of
+fetch-fix rounds. The iteration was in *shipping the files*, not in building
+the app.
+
+About 2,500 lines across a FastAPI backend and a dependency-free frontend,
+verified against a real invoice at 99% OCR confidence.
 
 ## What it does
 
@@ -136,6 +163,20 @@ Each score is the model's own estimate that the value is correct, and the
 server clamps it to 0..1. A field **passes** when its confidence is at or above
 the pass threshold in the Results tab (default 80%). Set it once and it
 persists for the session; the Test-model dialog uses the same line.
+
+Drag the slider and every verdict recolours instantly:
+
+| 95% threshold | 80% threshold |
+|---|---|
+| ![95%](docs/screenshot-threshold-95.png) | ![80%](docs/screenshot-results.png) |
+
+The model self-check, so you know your local model actually works before
+trusting it on real documents:
+
+![Test model](docs/screenshot-selfcheck.png)
+
+A field the model can't find shows grey **MISSING** and never passes, however
+low you set the threshold.
 
 The default 80% is a reasonable starting point:
 
