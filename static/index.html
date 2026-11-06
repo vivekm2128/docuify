@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Docufy — scrape any document</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H11l2 2h4.5A2.5 2.5 0 0 1 20 8.5v9A2.5 2.5 0 0 1 17.5 20h-11A2.5 2.5 0 0 1 4 17.5v-11Z" stroke="currentColor" stroke-width="1.6"/>
+        <path d="m9 14.2 1.9 1.9L15 11.6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="brand-text">
+      <span class="brand-name">Docufy</span>
+      <span class="brand-tag">local doc intelligence</span>
+    </div>
+  </div>
+
+  <div class="status-chips">
+    <button class="chip chip-btn" id="test-model" title="Send a tiny known document through your local model">
+      <span class="dot"></span><span>Test model</span>
+    </button>
+    <span class="chip" id="llm-chip" title="Your local model">
+      <span class="dot"></span><span id="llm-label">checking model…</span>
+    </span>
+    <span class="chip" id="ocr-chip" title="OCR engine">
+      <span class="dot ok"></span><span id="ocr-label">OCR ready</span>
+    </span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ============================ LEFT: viewer ============================ -->
+  <section class="pane viewer-pane" id="viewer-pane">
+    <div class="pane-head">
+      <div class="doc-title">
+        <span class="file-icon" id="file-icon">📄</span>
+        <div>
+          <div class="doc-name" id="doc-name">No document yet</div>
+          <div class="doc-meta" id="doc-meta">Drop a PDF or image to get started</div>
+        </div>
+      </div>
+
+      <div class="zoom-tools" id="zoom-tools" hidden>
+        <button class="icon-btn" id="zoom-out" title="Zoom out (Ctrl -)">−</button>
+        <span class="zoom-level" id="zoom-level">100%</span>
+        <button class="icon-btn" id="zoom-in" title="Zoom in (Ctrl +)">+</button>
+        <button class="icon-btn" id="zoom-fit" title="Fit to width">⤢</button>
+        <button class="icon-btn" id="rotate" title="Rotate">⟳</button>
+      </div>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <!-- empty state doubles as the dropzone -->
+      <label class="dropzone" id="dropzone">
+        <input type="file" id="file-input" accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.gif,.heic,.heif" hidden />
+        <div class="dz-glow"></div>
+        <div class="dz-icon">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="dz-title">Drop your document here</div>
+        <div class="dz-sub">or <span class="dz-browse">browse files</span></div>
+        <div class="dz-types">PDF · PNG · JPG · WEBP · TIFF · HEIC — up to 50&nbsp;MB</div>
+      </label>
+
+      <div class="pages" id="pages" hidden></div>
+    </div>
+
+    <div class="page-strip" id="page-strip" hidden></div>
+  </section>
+
+  <!-- ============================ RIGHT: controls ============================ -->
+  <section class="pane control-pane">
+
+    <div class="pane-head">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="fields" role="tab" aria-selected="true">Fields</button>
+        <button class="tab" data-tab="results" role="tab" aria-selected="false">Results <span class="tab-count" id="result-count" hidden>0</span></button>
+        <button class="tab" data-tab="raw" role="tab" aria-selected="false">API</button>
+      </div>
+      <button class="ghost-btn" id="clear-fields" title="Remove all fields">Clear</button>
+    </div>
+
+    <div class="pane-body">
+
+      <!-- ---------------- fields tab ---------------- -->
+      <div class="tab-panel active" id="panel-fields">
+        <p class="hint">
+          Tell Docufy what to pull out. Each field gets a name, a plain-English description, and a type.
+        </p>
+
+        <div class="field-list" id="field-list"></div>
+
+        <div class="preset-row">
+          <span class="preset-label">Quick add</span>
+          <div class="preset-chips" id="presets"></div>
+        </div>
+
+        <button class="add-field-btn" id="add-field">
+          <span class="plus">+</span> Add field
+          <kbd>⌘↵</kbd>
+        </button>
+      </div>
+
+      <!-- ---------------- results tab ---------------- -->
+      <div class="tab-panel" id="panel-results">
+        <div class="results-empty" id="results-empty">
+          <div class="re-orb"></div>
+          <p>Nothing scraped yet.</p>
+          <span>Add your fields, then hit <b>Scrape document</b>.</span>
+        </div>
+        <div id="results-content" hidden>
+          <div class="threshold-bar">
+            <label for="threshold">Pass threshold</label>
+            <input type="range" id="threshold" min="0" max="100" step="5" value="80" />
+            <output id="threshold-value">80%</output>
+            <span class="threshold-count" id="threshold-count"></span>
+          </div>
+          <div class="score-board">
+            <div class="score-ring" id="score-ring">
+              <svg viewBox="0 0 44 44" aria-hidden="true">
+                <circle cx="22" cy="22" r="19" class="ring-bg"/>
+                <circle cx="22" cy="22" r="19" class="ring-fg" id="ring-fg"/>
+              </svg>
+              <span id="score-value">—</span>
+            </div>
+            <div class="score-copy">
+              <div class="score-title" id="score-title">Average confidence</div>
+              <div class="score-sub" id="score-sub">—</div>
+            </div>
+          </div>
+          <div class="result-cards" id="result-cards"></div>
+        </div>
+      </div>
+
+      <!-- ---------------- api tab ---------------- -->
+      <div class="tab-panel" id="panel-raw">
+        <div class="raw-head">
+          <div class="endpoint">
+            <span class="method">POST</span><code>/api/scrape</code>
+          </div>
+          <div class="raw-actions">
+            <select id="raw-view" class="mini-select">
+              <option value="pretty">Pretty</option>
+              <option value="minified">Minified</option>
+            </select>
+            <button class="ghost-btn" id="copy-json">Copy</button>
+            <button class="ghost-btn" id="download-json">Download</button>
+          </div>
+        </div>
+        <div class="raw-request" id="raw-request"></div>
+        <pre class="code-block" id="raw-json"><span class="muted">// Run a scrape to see the raw API response.</span></pre>
+      </div>
+
+    </div>
+
+    <!-- ---------------- action bar ---------------- -->
+    <div class="action-bar">
+      <div class="progress-line" id="progress-line"><span></span></div>
+      <button class="scrape-btn" id="scrape-btn">
+        <span class="btn-shine"></span>
+        <span class="btn-content">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M18.5 15.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1L15.5 18l2.1-.9.9-2.1Z" fill="currentColor"/>
+          </svg>
+          <span id="scrape-label">Scrape document</span>
+        </span>
+      </button>
+      <div class="action-meta" id="action-meta">Ready when you are</div>
+    </div>
+  </section>
+</main>
+
+<!-- toasts -->
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<!-- upload overlay -->
+<div class="overlay" id="overlay" hidden>
+  <div class="overlay-card">
+    <div class="spinner"></div>
+    <div class="overlay-title" id="overlay-title">Reading your document…</div>
+    <div class="overlay-sub" id="overlay-sub">Running OCR locally. Large PDFs take a little longer.</div>
+  </div>
+</div>
+
+<!-- model self-check dialog -->
+<div class="overlay" id="check-overlay" hidden>
+  <div class="overlay-card check-card">
+    <div class="check-head">
+      <span class="overlay-title" id="check-title">Testing your model…</span>
+      <button class="icon-btn" id="check-close" title="Close">✕</button>
+    </div>
+    <div class="overlay-sub" id="check-sub">
+      Sending a tiny invoice with known answers to your local model.
+    </div>
+    <div class="check-body" id="check-body"></div>
+  </div>
+</div>
+
+<template id="field-template">
+  <div class="field-card">
+    <div class="field-head">
+      <input class="field-name" type="text" placeholder="Field name, e.g. invoice_total" />
+      <select class="field-type" title="Data type">
+        <option value="string">string</option>
+        <option value="number">number</option>
+        <option value="integer">integer</option>
+        <option value="boolean">boolean</option>
+        <option value="date">date</option>
+        <option value="array">array</option>
+        <option value="object">object</option>
+      </select>
+      <button class="icon-btn remove-field" title="Remove field">✕</button>
+    </div>
+    <textarea class="field-desc" rows="2" placeholder="Describe it — e.g. the total amount payable including tax"></textarea>
+    <div class="field-foot">
+      <label class="toggle">
+        <input type="checkbox" class="field-required" />
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-text">Required</span>
+      </label>
+      <span class="field-status" data-status="idle"></span>
+    </div>
+  </div>
+</template>
+
+<script src="/app.js"></script>
+</body>
+</html>
