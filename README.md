@@ -362,14 +362,56 @@ worth stating plainly: a Factory automation cannot currently act on them. A
 webhook automation receives the payload (Factory reports the delivery as
 dispatched), but this Mac is not a registered execution target, so no command
 runs against this checkout. Anything that did run remotely would have the
-repository but not the local MLX models. Until those files are committed to a
-remote a runner can clone, treat the Request tab as a well-structured inbox: it
-records requests, and a person or a session with this checkout does the work.
+repository but not the local MLX models.
+
+So the work is split. A cloud session implements the request and merges to
+`main`. The Mac runs `tools/deploy_watch.py`, which notices the new commit and
+deploys it. See [Deploying merged work](#deploying-merged-work).
 
 `DOCUFY_LLM_FALLBACK_MODEL` adds an optional second pass for fields the read
 pass could not ground. On the five bundled samples it changed no answer and
 added about 13 seconds per document, so it is off by default. Turn it on if
 your own documents come back with blank fields.
+
+### Deploying merged work
+
+The cloud session that implements a request has the repository but not the
+models. This Mac has the models. `tools/deploy_watch.py` connects the two: it
+asks GitHub for `main`'s commit every ten seconds and, when that changes, pulls
+and restarts the app.
+
+```
+.venv/bin/python tools/deploy_watch.py                       # poll every 10s, port 8800
+.venv/bin/python tools/deploy_watch.py --once                # one pass, for a timer or a test
+.venv/bin/python tools/deploy_watch.py --interval 30 --port 9000
+```
+
+It is safe to leave running next to your own work, because it only ever
+fast-forwards and it refuses to pull when the working tree is dirty. If you have
+an uncommitted edit, it logs `working tree is dirty; skipping` and waits. Your
+edit is never thrown away.
+
+When the pull lands it restarts the app and waits for `/api/health`. If the new
+commit does not come back healthy, it resets to the commit that was running,
+restarts, and writes `data/deploy-incidents/<UTC>.json` with the failed commit,
+the rollback target, and a pointer to `data/deploy-watch.log`. It also rolls
+back if the app was already stopped before the pull, so a dead app still
+upgrades instead of being stuck on old code forever.
+
+Those incident files feed the **Docufy Deploy Incident Triage** automation. It
+runs every 30 minutes, reads the open incidents, inspects the failed commit,
+reproduces the failure, and fixes the real cause on `main` only after the checks
+pass and the app answers on this Mac. The watcher then deploys that fix. If it
+cannot find the cause it says so rather than pushing a guess, and it posts a
+short note to `#feature-request`.
+
+Like every local automation, triage only fires while the Factory desktop app or
+`droid daemon` is running. A missed run happens once when one starts again, so
+an incident filed overnight waits rather than being lost.
+
+Environment variables: `DOCUFY_ROOT` (checkout to deploy, default the script's
+parent directory) and `DOCUFY_HEALTH_URL` (default
+`http://127.0.0.1:8800/api/health`). It watches the `main` branch.
 ## Configuration
 
 Copy `env.example` to `.env` and edit. Every setting also works as an
@@ -444,6 +486,7 @@ docufy/
     eval_extraction.py   # end-to-end accuracy + latency check
     compare_passes.py    # fast path vs fast path + verifier, same samples
     fake_ollama.py       # stand-in model for testing without Ollama
+    deploy_watch.py      # pull merged work, restart, roll back a bad deploy
   samples/               # generated samples + screenshots
 ```
 
@@ -490,5 +533,3 @@ DOCUFY_LLM_URL=http://127.0.0.1:11434 python run.py   # terminal 2
 
 Documents are stored under `data/documents/` on your disk, and the model is
 local, so nothing is uploaded anywhere. Delete that folder to clear history.
-
-<!-- deploy-watch test marker -->

@@ -33,6 +33,9 @@ INCIDENTS = ROOT / "data" / "deploy-incidents"
 LOG_PATH = ROOT / "data" / "deploy-watch.log"
 HEALTH_URL = os.environ.get("DOCUFY_HEALTH_URL", "http://127.0.0.1:8800/api/health")
 
+# Off in the long-running loop so an idle watcher stays silent, on for --once.
+VERBOSE = False
+
 
 def git(*args: str, check: bool = True) -> str:
     result = subprocess.run(
@@ -151,6 +154,11 @@ def check_once(port: int) -> int:
         log("could not read origin/main; skipping")
         return 1
     if remote == local:
+        # Quiet by default in the loop, but say so on a single pass: that is
+        # how a timer or a person checks the watcher is actually reaching
+        # GitHub rather than silently doing nothing.
+        if VERBOSE:
+            log(f"nothing to deploy; local main is {local[:7]}")
         return 0
 
     log(f"origin/main moved: {local[:7]} -> {remote[:7]}")
@@ -190,6 +198,7 @@ def check_once(port: int) -> int:
 
 
 def main() -> int:
+    global VERBOSE
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="check once and exit")
     parser.add_argument("--interval", type=float, default=10.0)
@@ -197,6 +206,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.once:
+        # One pass is how a timer, a test, or a person invokes this, so report
+        # the outcome even when the answer is "nothing to do".
+        VERBOSE = True
         return check_once(args.port)
 
     log(f"watching origin/main every {args.interval:.0f}s")
