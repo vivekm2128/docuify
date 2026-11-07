@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import extractor
+from ._break_test import *  # noqa: F401
 from .config import settings
 from .ocr import extract as run_ocr
 
