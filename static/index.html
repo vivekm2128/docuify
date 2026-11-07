@@ -92,6 +92,7 @@
         <button class="tab active" data-tab="fields" role="tab" aria-selected="true">Fields</button>
         <button class="tab" data-tab="results" role="tab" aria-selected="false">Results <span class="tab-count" id="result-count" hidden>0</span></button>
         <button class="tab" data-tab="raw" role="tab" aria-selected="false">API</button>
+        <button class="tab" data-tab="request" role="tab" aria-selected="false">Request</button>
       </div>
       <button class="ghost-btn" id="clear-fields" title="Remove all fields">Clear</button>
     </div>
@@ -100,6 +101,18 @@
 
       <!-- ---------------- fields tab ---------------- -->
       <div class="tab-panel active" id="panel-fields">
+        <div class="template-box">
+          <label class="template-label" for="template-select">Document type</label>
+          <div class="template-row">
+            <select class="template-select" id="template-select" title="Load a field set for this kind of document">
+              <option value="">Loading templates…</option>
+            </select>
+            <button class="ghost-btn" id="clone-template" title="Copy this template into an editable custom set">Clone</button>
+            <button class="ghost-btn" id="save-template" title="Save your current fields as a custom template" hidden>Save</button>
+          </div>
+          <p class="template-hint" id="template-hint"></p>
+        </div>
+
         <p class="hint">
           Tell Docufy what to pull out. Each field gets a name, a plain-English description, and a type.
         </p>
@@ -163,8 +176,56 @@
             <button class="ghost-btn" id="download-json">Download</button>
           </div>
         </div>
+        <div class="diag" id="diagnostics" hidden>
+          <div class="diag-head">
+            <span>Diagnostics</span>
+            <span class="diag-sub" id="diag-sub"></span>
+          </div>
+          <div class="diag-steps" id="diag-steps"></div>
+          <div class="diag-grid" id="diag-grid"></div>
+          <details class="diag-raw">
+            <summary>Model's raw reply</summary>
+            <pre class="code-block" id="raw-response"></pre>
+          </details>
+        </div>
         <div class="raw-request" id="raw-request"></div>
         <pre class="code-block" id="raw-json"><span class="muted">// Run a scrape to see the raw API response.</span></pre>
+      </div>
+
+      <!-- ---------------- feature request tab ---------------- -->
+      <div class="tab-panel" id="panel-request">
+        <p class="hint">
+          Ask for something new: a document type, a field, a faster path. It is recorded with the
+          version and model you are running, so whoever picks it up starts from real context.
+        </p>
+
+        <div class="req-form">
+          <label class="req-label" for="req-title">What do you want?</label>
+          <input class="req-input" id="req-title" maxlength="200" placeholder="e.g. Add a purchase order template" />
+
+          <label class="req-label" for="req-kind">Kind</label>
+          <select class="req-input" id="req-kind">
+            <option value="template">New document template</option>
+            <option value="field">Add or change a field</option>
+            <option value="speed">Make scraping faster</option>
+            <option value="bug">Something is broken</option>
+            <option value="other">Something else</option>
+          </select>
+
+          <label class="req-label" for="req-detail">Details (optional)</label>
+          <textarea class="req-input req-textarea" id="req-detail" rows="5"
+            placeholder="What does the document look like? Which fields matter? Anything you already tried?"></textarea>
+
+          <div class="req-actions">
+            <button class="scrape-btn req-submit" id="req-submit">
+              <span class="btn-content">Submit request</span>
+            </button>
+            <span class="req-status" id="req-status"></span>
+          </div>
+        </div>
+
+        <div class="req-list-head">Recent requests</div>
+        <div class="req-list" id="req-list"></div>
       </div>
 
     </div>

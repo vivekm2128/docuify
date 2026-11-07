@@ -51,9 +51,25 @@ class Settings:
 
     # --- LLM (Ollama-compatible API on your Mac) ---
     llm_base_url: str = os.environ.get("DOCUFY_LLM_URL", "http://127.0.0.1:11434")
-    llm_model: str = os.environ.get("DOCUFY_LLM_MODEL", "qwen3:8b")
+    # MLX build: on Apple Silicon this runs on the MLX engine (Apple's own
+    # framework) instead of llama.cpp, which measured ~2x faster prompt
+    # processing and scored higher than qwen3:8b on the bundled samples.
+    llm_model: str = os.environ.get("DOCUFY_LLM_MODEL", "qwen3.5:4b-mlx")
     llm_temperature: float = _float("DOCUFY_LLM_TEMPERATURE", 0.0)
     llm_num_ctx: int = _int("DOCUFY_LLM_NUM_CTX", 8192)
+    # Cap the answer length so a runaway generation cannot burn minutes.
+    llm_num_predict: int = _int("DOCUFY_LLM_NUM_PREDICT", 1200)
+    # Thinking models (qwen3) otherwise spend seconds on hidden reasoning
+    # tokens before writing the JSON we actually use.
+    llm_think: bool = os.environ.get("DOCUFY_LLM_THINK", "0").lower() in {"1", "true", "yes"}
+    # Second model, used only for the fields the primary model could not ground
+    # in the document (something missing, or a value we cannot find on the
+    # page). Empty disables the second pass.
+    #
+    # Measured on the five samples: it changes no answer (34/38 either way) and
+    # costs ~13s per document, so it is off by default. It pays off on documents
+    # that leave fields blank, which these fixtures mostly do not.
+    llm_fallback_model: str = os.environ.get("DOCUFY_LLM_FALLBACK_MODEL", "")
     llm_timeout: float = _float("DOCUFY_LLM_TIMEOUT", 300.0)
     # Keep the model resident in RAM between scrapes (much faster repeat runs).
     llm_keep_alive: str = os.environ.get("DOCUFY_LLM_KEEP_ALIVE", "30m")
@@ -69,6 +85,9 @@ class Settings:
 
     # --- Storage / limits ---
     data_dir: Path = Path(os.environ.get("DOCUFY_DATA_DIR", str(BASE_DIR / "data")))
+    # Recorded on bug reports and feature requests so a later investigation
+    # knows which build the reporter was running.
+    app_version: str = os.environ.get("DOCUFY_VERSION", "1.0.0")
     static_dir: Path = BASE_DIR / "static"
     max_upload_mb: int = _int("DOCUFY_MAX_UPLOAD_MB", 50)
     # Only the first N characters of OCR text are sent to the model.

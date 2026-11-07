@@ -17,7 +17,7 @@ from fastapi import FastAPI, Request
 
 app = FastAPI()
 
-MODEL = "qwen3:8b"
+MODEL = "qwen3.5:4b-mlx"
 
 
 def guess(key: str, doc: str) -> dict:

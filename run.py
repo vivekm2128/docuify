@@ -22,7 +22,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run the Docufy server locally.")
     parser.add_argument("--host", default=None, help="bind address (default 127.0.0.1)")
     parser.add_argument("--port", type=int, default=None, help="port (default 8765)")
-    parser.add_argument("--model", default=None, help="Ollama model name, e.g. qwen3:8b")
+    parser.add_argument("--model", default=None, help="Ollama model name, e.g. qwen3.5:4b-mlx")
     parser.add_argument("--llm-url", default=None, help="Ollama base URL (default http://127.0.0.1:11434)")
     parser.add_argument("--no-browser", action="store_true", help="don't open the browser")
     parser.add_argument("--reload", action="store_true", help="reload on code changes (development)")

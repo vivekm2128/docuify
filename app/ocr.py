@@ -7,7 +7,9 @@ dependency such as Tesseract, and it runs fast on Apple Silicon.
 from __future__ import annotations
 
 import io
+import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -77,6 +79,47 @@ class OcrResult:
             "pages": [p.as_dict() for p in self.pages],
         }
 
+    @property
+    def words(self) -> list[Word]:
+        return [w for p in self.pages for w in p.words]
+
+    def worst_confidence(self) -> float:
+        """The weakest word score, not the average.
+
+        A page average hides the one destroyed field among a hundred good
+        words, which is exactly the failure worth surfacing.
+        """
+        scores = [w.confidence for w in self.words]
+        return min(scores) if scores else 0.0
+
+
+# A run of letters this long with no space is almost never one real word in
+# this kind of document; it is OCR merging several words into one token
+# ("NE Fremont St" -> "NEFremontSt"). Digits are left out on purpose, because
+# account numbers and dates are legitimately long.
+_MERGED_LETTERS = re.compile(r"[A-Za-z]{15,}")
+# The same idea for runs that mix letters and digits, like "4820NEFremontSt".
+_MERGED_ALNUM = re.compile(r"(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{14,}")
+
+
+def merged_tokens(text: str) -> list[str]:
+    """Spans that look like several words glued together by the OCR.
+
+    These are the defect confidence cannot see: the recogniser read every
+    character correctly, so it reports high confidence, but the word
+    boundaries and therefore the field value are wrong.
+
+    Runs are looked for inside a whitespace token, not matched whole, because
+    a glued address carries its punctuation with it
+    ("4820NEFremontSt,Portland,OR97213").
+    """
+    found: list[str] = []
+    for token in text.split():
+        for pattern in (_MERGED_LETTERS, _MERGED_ALNUM):
+            found.extend(pattern.findall(token))
+    # Longest first, so the most damaged span is the one reported.
+    return sorted(set(found), key=len, reverse=True)
+
 
 def _load_raster_pages(path: Path) -> list[Image.Image]:
     """Turn any supported upload into a list of RGB PIL images."""
@@ -131,6 +174,63 @@ def _prepare(img: Image.Image) -> Image.Image:
     return img
 
 
+def _join_text(
+    items: list[tuple[float, float, float, float, str, float]], char_width: float
+) -> str:
+    """Group detection boxes into lines and rejoin them with real spacing.
+
+    Two things matter for the model downstream:
+      * words kept apart by a small but visible gap must come back with a space
+        ("Invoice No: INV-2026-1042", not "InvoiceNo:INV-2026-1042");
+      * a wide gap means separate columns and gets a bigger separator, so the
+        model can still tell the left column from the right one.
+    """
+    if not items:
+        return ""
+
+    space_threshold = char_width * 0.35
+    column_threshold = max(char_width * 2.5, 0.008)
+
+    lines: list[list[tuple[float, float, float, float, str, float]]] = []
+    for item in sorted(items, key=lambda it: (it[1], it[0])):
+        centre = (item[1] + item[3]) / 2
+        height = max(item[3] - item[1], 1e-4)
+        if lines:
+            last = lines[-1]
+            last_centre = sum((it[1] + it[3]) / 2 for it in last) / len(last)
+            last_height = sum(max(it[3] - it[1], 1e-4) for it in last) / len(last)
+            if abs(centre - last_centre) < 0.6 * max(height, last_height):
+                last.append(item)
+                continue
+        lines.append([item])
+
+    out: list[str] = []
+    for line in lines:
+        line.sort(key=lambda it: it[0])
+        parts: list[str] = []
+        prev_x1: float | None = None
+        prev_text = ""
+        for x0, _, x1, _, text, _ in line:
+            if prev_x1 is not None:
+                gap = x0 - prev_x1
+                if gap >= column_threshold:
+                    parts.append(" | ")
+                elif gap >= space_threshold:
+                    # Punctuation hugs the token it belongs to.
+                    if prev_text.endswith((".", ",", ":", ";", "/", "-", "(", "'")):
+                        parts.append(" ")
+                    elif text[:1] in (".", ",", ";", ":", "/", ")", "%", "'"):
+                        parts.append("")
+                    else:
+                        parts.append(" ")
+                else:
+                    parts.append(" ")
+            parts.append(text)
+            prev_x1 = x1
+            prev_text = text
+        out.append("".join(parts).strip())
+    return "\n".join(out)
+
 def _group_lines(
     items: list[tuple[float, float, float, float, str, float]],
     gap_threshold: float,
@@ -180,55 +280,66 @@ def _group_lines(
     return "\n".join(out)
 
 
+def _page_payload(raw: Image.Image) -> tuple[bytes, int, int]:
+    """Prepare one page and encode it once for the engine."""
+    img = _prepare(raw)
+    width, height = img.size
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue(), width, height
+
+
 def extract(path: Path) -> OcrResult:
     """Run OCR over every page of the uploaded document."""
     engine = _get_engine()
     pages: list[Page] = []
 
-    for index, raw in enumerate(_load_raster_pages(path)):
-        img = _prepare(raw)
-        width, height = img.size
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
+    raws = _load_raster_pages(path)
+    # Render/encode the next page while the current one is being recognised.
+    # The engine call itself is serial, so this only hides the ~0.3s of image
+    # work per page without contending for CPU during recognition.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        prepared = [pool.submit(_page_payload, raw) for raw in raws]
 
-        result, _ = engine(buf.getvalue())
-        words: list[Word] = []
-        flat: list[tuple[float, float, float, float, str, float]] = []
-        for item in result or []:
-            box, text, score = item[0], item[1], float(item[2])
-            text = text.strip()
-            if not text or score < settings.ocr_min_confidence:
-                continue
-            xs = [float(p[0]) for p in box]
-            ys = [float(p[1]) for p in box]
-            norm = [
-                round(min(xs) / width, 5),
-                round(min(ys) / height, 5),
-                round(max(xs) / width, 5),
-                round(max(ys) / height, 5),
+        for index, fut in enumerate(prepared):
+            payload, width, height = fut.result()
+            result, _ = engine(payload)
+
+            words: list[Word] = []
+            flat: list[tuple[float, float, float, float, str, float]] = []
+            for item in result or []:
+                box, text, score = item[0], item[1], float(item[2])
+                text = text.strip()
+                if not text or score < settings.ocr_min_confidence:
+                    continue
+                xs = [float(p[0]) for p in box]
+                ys = [float(p[1]) for p in box]
+                norm = [
+                    round(min(xs) / width, 5),
+                    round(min(ys) / height, 5),
+                    round(max(xs) / width, 5),
+                    round(max(ys) / height, 5),
+                ]
+                words.append(Word(text=text, confidence=score, box=norm))
+                flat.append((norm[0], norm[1], norm[2], norm[3], text, score))
+
+            # One character-width estimate -> a sensible column-gap threshold.
+            per_char = [
+                (it[2] - it[0]) / max(len(it[4]), 1) for it in flat if it[4].strip()
             ]
-            words.append(Word(text=text, confidence=score, box=norm))
-            flat.append((norm[0], norm[1], norm[2], norm[3], text, score))
-
-        # One character-width estimate -> a sensible column-gap threshold.
-        per_char = [
-            (it[2] - it[0]) / max(len(it[4]), 1) for it in flat if it[4].strip()
-        ]
-        char_width = (sum(per_char) / len(per_char)) if per_char else 0.01
-        page_text = _group_lines(flat, gap_threshold=max(char_width * 2.5, 0.008))
-        confs = [w.confidence for w in words]
-        pages.append(
-            Page(
-                index=index,
-                width=width,
-                height=height,
-                text=page_text,
-                confidence=sum(confs) / len(confs) if confs else 0.0,
-                words=words,
+            char_width = (sum(per_char) / len(per_char)) if per_char else 0.01
+            page_text = _join_text(flat, char_width)
+            confs = [w.confidence for w in words]
+            pages.append(
+                Page(
+                    index=index,
+                    width=width,
+                    height=height,
+                    text=page_text,
+                    confidence=sum(confs) / len(confs) if confs else 0.0,
+                    words=words,
+                )
             )
-        )
-
     all_confs = [p.confidence for p in pages if p.words]
     full_text = "\n\n".join(f"--- Page {p.index + 1} ---\n{p.text}" for p in pages).strip()
     if not full_text:

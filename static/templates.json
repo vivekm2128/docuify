@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "templates": {
+    "invoice": {
+      "label": "Invoice",
+      "hint": "Bills for goods or services: vendor, totals, dates, line items.",
+      "sample": "sample-invoice.pdf",
+      "fields": [
+        {"key": "vendor_name", "description": "Company issuing the invoice, usually the largest text at the top", "type": "string"},
+        {"key": "invoice_number", "description": "The invoice reference number, often labelled Invoice No or INV", "type": "string"},
+        {"key": "invoice_date", "description": "Date the invoice was issued", "type": "date"},
+        {"key": "due_date", "description": "Date payment is due, not the invoice date", "type": "date"},
+        {"key": "customer_name", "description": "Company or person being billed, usually under Bill To", "type": "string"},
+        {"key": "total_amount", "description": "Final total payable including tax and shipping, as a decimal number", "type": "number"},
+        {"key": "currency", "description": "ISO currency code of the total, e.g. USD, EUR", "type": "string"},
+        {"key": "purchase_order", "description": "PO or purchase order number if present", "type": "string"},
+        {"key": "is_paid", "description": "Whether the invoice is marked as paid", "type": "boolean"},
+        {"key": "line_items", "description": "Each billed line: what was sold, how many, and the line amount", "type": "array", "fields": ["description", "quantity", "amount"]}
+      ]
+    },
+    "paystub": {
+      "label": "Paystub",
+      "hint": "Earnings statements: gross and net pay, hours, deductions.",
+      "sample": "sample-paystub.pdf",
+      "fields": [
+        {"key": "employee_name", "description": "Full name of the employee being paid", "type": "string"},
+        {"key": "employer_name", "description": "Company issuing the paystub", "type": "string"},
+        {"key": "employee_id", "description": "Employee identification number", "type": "string"},
+        {"key": "pay_date", "description": "Date the pay was issued", "type": "date"},
+        {"key": "pay_period_start", "description": "First day of the pay period", "type": "date"},
+        {"key": "pay_period_end", "description": "Last day of the pay period", "type": "date"},
+        {"key": "gross_pay", "description": "Gross pay for this period only, before deductions; not the year-to-date column", "type": "number"},
+        {"key": "net_pay", "description": "Net pay, the amount actually deposited after deductions", "type": "number"},
+        {"key": "regular_hours", "description": "Regular hours worked this period", "type": "number"},
+        {"key": "ytd_gross", "description": "Total gross earnings year to date", "type": "number"},
+        {"key": "total_deductions", "description": "Total of all deductions this period", "type": "number"}
+      ]
+    },
+    "bank_statement": {
+      "label": "Bank statement",
+      "hint": "Account statements: balances, dates, transactions.",
+      "sample": "sample-bank-statement.pdf",
+      "fields": [
+        {"key": "bank_name", "description": "Name of the financial institution", "type": "string"},
+        {"key": "account_holder", "description": "Full name of the account holder", "type": "string"},
+        {"key": "account_number", "description": "Account number; if partly masked, return the visible digits", "type": "string"},
+        {"key": "statement_start", "description": "First day of the statement period", "type": "date"},
+        {"key": "statement_end", "description": "Last day of the statement period", "type": "date"},
+        {"key": "beginning_balance", "description": "Opening or beginning balance for the period", "type": "number"},
+        {"key": "ending_balance", "description": "Closing or ending balance for the period", "type": "number"},
+        {"key": "total_deposits", "description": "Total credits or deposits during the period, if shown", "type": "number"},
+        {"key": "transactions", "description": "Each transaction line: the date, its description, and the amount", "type": "array", "fields": ["date", "description", "amount"]}
+      ]
+    },
+    "lending_application": {
+      "label": "Lending application",
+      "hint": "Loan and mortgage forms: borrower, income, loan terms.",
+      "sample": "sample-lending-application.pdf",
+      "fields": [
+        {"key": "borrower_name", "description": "Full legal name of the applicant", "type": "string"},
+        {"key": "application_number", "description": "Loan or application reference number", "type": "string"},
+        {"key": "application_date", "description": "Date the application was signed or submitted", "type": "date"},
+        {"key": "date_of_birth", "description": "Borrower date of birth", "type": "date"},
+        {"key": "employer_name", "description": "Borrower current employer", "type": "string"},
+        {"key": "monthly_income", "description": "Total gross monthly income in money units, as a number", "type": "number"},
+        {"key": "loan_amount", "description": "Amount the borrower is requesting to borrow", "type": "number"},
+        {"key": "purchase_price", "description": "Purchase price of the property", "type": "number"},
+        {"key": "down_payment", "description": "Down payment amount", "type": "number"},
+        {"key": "interest_rate", "description": "Interest rate as a percentage", "type": "number"},
+        {"key": "loan_term_months", "description": "Loan term in months", "type": "integer"},
+        {"key": "credit_score", "description": "Borrower credit score", "type": "integer"},
+        {"key": "property_address", "description": "Full address of the property being financed", "type": "string"}
+      ]
+    }
+  }
+}

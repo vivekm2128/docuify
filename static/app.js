@@ -89,12 +89,115 @@ $$(".tab").forEach((tab) => {
     });
     $$(".tab-panel").forEach((p) => p.classList.remove("active"));
     $(`#panel-${tab.dataset.tab}`).classList.add("active");
+    if (tab.dataset.tab === "request") refreshRequests();
   });
 });
 
 function showTab(name) {
   const tab = $(`.tab[data-tab="${name}"]`);
   if (tab) tab.click();
+}
+
+// ---------------------------------------------------------------- feature requests
+
+const KINDS = {
+  template: "template",
+  field: "field",
+  speed: "speed",
+  bug: "bug",
+  other: "other",
+};
+
+async function refreshRequests() {
+  const list = $("#req-list");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/feature-requests");
+    const data = await res.json();
+    const items = data.requests || [];
+    if (!items.length) {
+      list.innerHTML = `<p class="muted req-empty">Nothing yet. Your first request shows up here.</p>`;
+      return;
+    }
+    list.innerHTML = items
+      .map(
+        (r) => `
+        <div class="req-item">
+          <div class="req-item-top">
+            <span class="req-item-title">${escapeHtml(r.title)}</span>
+            <span class="req-kind">${escapeHtml(KINDS[r.kind] || r.kind)}</span>
+          </div>
+          ${r.detail ? `<div class="req-item-detail">${escapeHtml(r.detail)}</div>` : ""}
+          <div class="req-item-meta">${escapeHtml(formatWhen(r.created_at))}</div>
+        </div>`
+      )
+      .join("");
+  } catch {
+    list.innerHTML = `<p class="muted req-empty">Could not load requests.</p>`;
+  }
+}
+
+function formatWhen(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 1440) return `${Math.round(mins / 60)}h ago`;
+  return d.toLocaleDateString();
+}
+
+function initRequests() {
+  const btn = $("#req-submit");
+  const status = $("#req-status");
+  const title = $("#req-title");
+  if (!btn || !title) return;
+
+  async function submit() {
+    const text = title.value.trim();
+    if (!text) {
+      status.textContent = "Give it a title first.";
+      status.className = "req-status is-bad";
+      title.focus();
+      return;
+    }
+    btn.disabled = true;
+    status.textContent = "Saving…";
+    status.className = "req-status";
+    try {
+      const res = await fetch("/api/feature-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: text,
+          detail: $("#req-detail").value.trim(),
+          kind: $("#req-kind").value,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Could not save the request.");
+      title.value = "";
+      $("#req-detail").value = "";
+      status.textContent = `Saved as ${data.request.id}`;
+      status.className = "req-status is-good";
+      refreshRequests();
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = "req-status is-bad";
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  btn.addEventListener("click", submit);
+  // Enter in the title submits; Enter in the details box stays a newline.
+  title.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
+    }
+  });
 }
 
 // ---------------------------------------------------------------- health
@@ -145,12 +248,26 @@ async function checkHealth() {
 function renderPresets() {
   const wrap = $("#presets");
   wrap.innerHTML = "";
-  PRESETS.forEach((p) => {
+
+  // Every built-in field, de-duplicated by key, in template order.
+  const seen = new Set();
+  const presets = [];
+  Object.values(templateCatalog)
+    .filter((t) => !t.custom)
+    .forEach((t) => {
+      (t.fields || []).forEach((f) => {
+        if (seen.has(f.key) || f.type === "array") return; // lists are niche chips
+        seen.add(f.key);
+        presets.push({ label: f.key.replace(/_/g, " "), data: f });
+      });
+    });
+  PRESETS.filter((p) => !seen.has(p.data.key)).forEach((p) => presets.push(p));
+
+  presets.forEach((p) => {
     const btn = document.createElement("button");
     btn.className = "preset-chip";
     btn.textContent = p.label;
     btn.addEventListener("click", () => {
-      // Don't add duplicates of the same preset.
       if (state.fields.some((f) => f.key === p.data.key)) {
         toast(`"${p.data.key}" is already in your fields.`);
         return;
@@ -165,7 +282,6 @@ function renderPresets() {
     wrap.appendChild(btn);
   });
 }
-
 function addField(data = {}) {
   const tpl = $("#field-template").content.cloneNode(true);
   const el = tpl.querySelector(".field-card");
@@ -176,6 +292,8 @@ function addField(data = {}) {
     description: data.description || "",
     type: data.type || "string",
     required: !!data.required,
+    // Slot names for structured lists (e.g. line items), kept off the form.
+    slots: data.fields || null,
     el,
   };
 
@@ -236,12 +354,16 @@ function autosize(ta) {
 
 function collectFields() {
   return state.fields
-    .map((f) => ({
-      key: (f.el.querySelector(".field-name").value || "").trim(),
-      description: (f.el.querySelector(".field-desc").value || "").trim(),
-      type: f.el.querySelector(".field-type").value,
-      required: f.el.querySelector(".field-required").checked,
-    }))
+    .map((f) => {
+      const out = {
+        key: (f.el.querySelector(".field-name").value || "").trim(),
+        description: (f.el.querySelector(".field-desc").value || "").trim(),
+        type: f.el.querySelector(".field-type").value,
+        required: f.el.querySelector(".field-required").checked,
+      };
+      if (f.slots) out.fields = f.slots;
+      return out;
+    })
     .filter((f) => f.key.length > 0);
 }
 
@@ -283,6 +405,180 @@ $("#clear-fields").addEventListener("click", () => {
   toast("Fields cleared.");
 });
 
+// ---------------------------------------------------------------- templates
+
+// Built-in field sets come from /templates.json so the UI and the test harness
+// share one definition. User-made ones live in localStorage.
+const CUSTOM_KEY = "docufy.customTemplates.v1";
+let templateCatalog = {};      // id -> { label, hint, fields, sample?, custom? }
+let currentTemplate = "";
+
+function loadCustomTemplates() {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveCustomTemplates(all) {
+  localStorage.setItem(CUSTOM_KEY, JSON.stringify(all));
+}
+
+async function loadTemplates() {
+  try {
+    const res = await fetch("/templates.json");
+    const data = await res.json();
+    templateCatalog = {};
+    Object.entries(data.templates || {}).forEach(([id, t]) => {
+      templateCatalog[id] = { ...t, custom: false };
+    });
+  } catch {
+    templateCatalog = {};
+  }
+
+  Object.entries(loadCustomTemplates()).forEach(([id, t]) => {
+    templateCatalog[`custom:${id}`] = { ...t, custom: true };
+  });
+
+  renderTemplateOptions();
+}
+
+function renderTemplateOptions() {
+  const sel = $("#template-select");
+  sel.innerHTML = "";
+  const addGroup = (label, entries) => {
+    if (!entries.length) return;
+    const group = document.createElement("optgroup");
+    group.label = label;
+    entries.forEach(([id, t]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = t.label;
+      group.appendChild(opt);
+    });
+    sel.appendChild(group);
+  };
+
+  const builtins = Object.entries(templateCatalog).filter(([, t]) => !t.custom);
+  const customs = Object.entries(templateCatalog).filter(([, t]) => t.custom);
+  addGroup("Templates", builtins);
+  addGroup("Your templates", customs);
+  const custom = document.createElement("option");
+  custom.value = "custom";
+  custom.textContent = "Custom (start empty)";
+  sel.appendChild(custom);
+
+  sel.value = currentTemplate && templateCatalog[currentTemplate] ? currentTemplate : "custom";
+  syncTemplateControls();
+}
+
+function syncTemplateControls() {
+  const t = templateCatalog[currentTemplate];
+  $("#template-hint").textContent = t
+    ? t.hint || ""
+    : "Build your own field list, or clone a template and edit the copy.";
+  $("#clone-template").hidden = !t;
+  $("#save-template").hidden = !(t && t.custom);
+}
+
+function fieldsFromTemplate(t) {
+  return (t?.fields || []).map((f) => ({
+    key: f.key,
+    description: f.description || "",
+    type: f.type || "string",
+    required: !!f.required,
+    fields: f.fields || null,
+  }));
+}
+
+function applyTemplateFields(fields) {
+  state.fields.forEach((f) => f.el.remove());
+  state.fields = [];
+  $("#field-list").innerHTML = "";
+  fields.forEach((data) => addField(data));
+  markFieldsChanged();
+}
+
+function currentFieldData() {
+  return collectFields().map((f) => {
+    const match = templateCatalog[currentTemplate]?.fields?.find((t) => t.key === f.key);
+    return match?.fields ? { ...f, fields: match.fields } : f;
+  });
+}
+
+function confirmReplace(fields) {
+  if (!state.fields.length) return true;
+  const same =
+    fields.length === state.fields.length &&
+    fields.every((f, i) => collectFields()[i]?.key === f.key);
+  if (same) return true;
+  return window.confirm(
+    `Replace your ${state.fields.length} current field${state.fields.length === 1 ? "" : "s"} ` +
+    `with the ${fields.length} in this template?`
+  );
+}
+
+$("#template-select").addEventListener("change", (e) => {
+  const id = e.target.value;
+  if (id === "custom") {
+    currentTemplate = "custom";
+    syncTemplateControls();
+    return;
+  }
+  const t = templateCatalog[id];
+  if (!t) return;
+  const fields = fieldsFromTemplate(t);
+  if (!confirmReplace(fields)) {
+    e.target.value = currentTemplate || "custom";
+    return;
+  }
+  currentTemplate = id;
+  applyTemplateFields(fields);
+  syncTemplateControls();
+  toast(`Loaded the ${t.label} template — ${fields.length} fields`, "ok");
+});
+
+$("#clone-template").addEventListener("click", () => {
+  const t = templateCatalog[currentTemplate];
+  if (!t) return;
+  const id = `${t.label.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_copy`;
+  const all = loadCustomTemplates();
+  const unique = all[id] ? `${id}_${Object.keys(all).length + 1}` : id;
+  all[unique] = {
+    label: `${t.label} (my copy)`,
+    hint: "Your copy. Edit the fields, then Save to keep the changes.",
+    fields: fieldsFromTemplate(t),
+  };
+  saveCustomTemplates(all);
+  templateCatalog[`custom:${unique}`] = { ...all[unique], custom: true };
+  currentTemplate = `custom:${unique}`;
+  renderTemplateOptions();
+  toast(`Cloned to “${all[unique].label}”`, "ok");
+});
+
+$("#save-template").addEventListener("click", () => {
+  if (!currentTemplate.startsWith("custom:")) return;
+  const all = loadCustomTemplates();
+  const id = currentTemplate.slice("custom:".length);
+  const existing = all[id];
+  const label = window.prompt("Template name", existing?.label || "My template");
+  if (!label) return;
+  const fields = currentFieldData();
+  if (!fields.length) {
+    toast("Add at least one field before saving.", "err");
+    return;
+  }
+  all[id] = {
+    label,
+    hint: (existing?.hint || "Your saved template."),
+    fields,
+  };
+  saveCustomTemplates(all);
+  templateCatalog[currentTemplate] = { ...all[id], custom: true };
+  renderTemplateOptions();
+  toast(`Saved “${label}” with ${fields.length} fields`, "ok");
+});
 // ---------------------------------------------------------------- upload
 
 const dropzone = $("#dropzone");
@@ -334,7 +630,7 @@ async function upload(file) {
   }
 
   setBusy(true);
-  showOverlay("Reading your document…", "Running OCR locally. Scanned PDFs take a little longer.");
+  showOverlay("Uploading…", "OCR runs when you scrape, so this is quick.");
 
   try {
     const form = new FormData();
@@ -346,9 +642,9 @@ async function upload(file) {
     state.documentId = data.document.document_id;
     state.documentMeta = data.document;
     state.results = null;
+    state.ocr = null;
 
-    renderDocument(data.document, data.ocr);
-    loadOcrAnnotations(data.document.document_id);
+    renderDocument(data.document);
 
     // Reset result state for the new document.
     state.fields.forEach((f) => {
@@ -359,13 +655,12 @@ async function upload(file) {
     $("#results-content").hidden = true;
     $("#results-empty").hidden = false;
     $("#result-count").hidden = true;
+    $("#diagnostics").hidden = true;
 
-    toast(`OCR finished in ${(data.ocr.duration_ms / 1000).toFixed(1)}s`, "ok");
+    toast("Document uploaded — OCR runs on the next scrape.", "ok");
 
     // A first-run nudge: make the field builder the obvious next step.
-    if (!state.fields.length) {
-      showTab("fields");
-    }
+    if (!state.fields.length) showTab("fields");
   } catch (err) {
     toast(err.message || "Upload failed.", "err");
   } finally {
@@ -374,7 +669,6 @@ async function upload(file) {
     updateScrapeState();
   }
 }
-
 async function errorText(res) {
   try {
     const data = await res.json();
@@ -384,12 +678,9 @@ async function errorText(res) {
   }
 }
 
-function renderDocument(meta, ocr) {
+function renderDocument(meta) {
   $("#doc-name").textContent = meta.filename;
-  const pages = meta.pages || 1;
-  $("#doc-meta").textContent =
-    `${pages} page${pages === 1 ? "" : "s"} · ${formatBytes(meta.bytes)} · ` +
-    `OCR ${Math.round((meta.ocr_confidence || 0) * 100)}%`;
+  $("#doc-meta").textContent = `${formatBytes(meta.bytes)} · reading on first scrape`;
   $("#file-icon").textContent = /\.pdf$/i.test(meta.filename) ? "📕" : "🖼️";
 
   dropzone.hidden = true;
@@ -401,34 +692,70 @@ function renderDocument(meta, ocr) {
   state.zoom = 0; // start fitted to width
   state.rotation = 0;
 
-  for (let i = 0; i < pages; i++) {
-    const wrap = document.createElement("div");
-    wrap.className = "page-wrap";
-    wrap.dataset.page = String(i);
-    wrap.style.animationDelay = `${i * 60}ms`;
+  // Page count isn't known until the PDF is opened. Show page 1 immediately and
+  // add the rest once the server reports how many there are.
+  addPageView(meta.document_id, 0, 0);
+  $("#page-strip").hidden = true;
+  applyZoom();
+  discoverPages(meta.document_id);
+}
 
-    const img = document.createElement("img");
-    img.src = `/api/documents/${meta.document_id}/pages/${i}.png`;
-    img.alt = `Page ${i + 1}`;
-    img.draggable = false;
-    img.addEventListener("load", () => applyZoom());
-    img.addEventListener("error", () => {
-      wrap.remove();
-      toast(`Could not render page ${i + 1}.`, "err");
-    });
+function addPageView(documentId, index, delayIndex) {
+  const pagesWrap = $("#pages");
+  const wrap = document.createElement("div");
+  wrap.className = "page-wrap";
+  wrap.dataset.page = String(index);
+  wrap.style.animationDelay = `${delayIndex * 60}ms`;
 
-    const num = document.createElement("div");
-    num.className = "page-num";
-    num.textContent = `PAGE ${i + 1}`;
+  const img = document.createElement("img");
+  img.src = `/api/documents/${documentId}/pages/${index}.png`;
+  img.alt = `Page ${index + 1}`;
+  img.draggable = false;
+  img.addEventListener("load", () => applyZoom());
+  img.addEventListener("error", () => {
+    wrap.remove();
+    if (index > 0) return; // past the last page: nothing to show
+    toast(`Could not render page ${index + 1}.`, "err");
+  });
 
-    wrap.append(img, num);
-    pagesWrap.appendChild(wrap);
+  const num = document.createElement("div");
+  num.className = "page-num";
+  num.textContent = `PAGE ${index + 1}`;
+
+  wrap.append(img, num);
+  pagesWrap.appendChild(wrap);
+}
+
+async function discoverPages(documentId) {
+  let status;
+  try {
+    const res = await fetch(`/api/documents/${documentId}/status`);
+    if (!res.ok) return;
+    status = await res.json();
+  } catch {
+    return;
   }
+  if (state.documentId !== documentId) return;
 
-  renderPageStrip(meta.document_id, pages);
+  const pages = Math.max(1, status.pages || 1);
+  state.documentMeta = { ...state.documentMeta, ...status, pages };
+
+  const existing = $$(".page-wrap").length;
+  for (let i = existing; i < pages; i++) addPageView(documentId, i, i);
+
+  renderPageStrip(documentId, pages);
+  updateDocMeta();
   applyZoom();
 }
 
+function updateDocMeta() {
+  const meta = state.documentMeta || {};
+  const pages = meta.pages || $$(".page-wrap").length || 1;
+  const bits = [`${pages} page${pages === 1 ? "" : "s"}`, formatBytes(meta.bytes || 0)];
+  if (meta.ocr_confidence != null) bits.push(`OCR ${Math.round(meta.ocr_confidence * 100)}%`);
+  else bits.push("OCR on scrape");
+  $("#doc-meta").textContent = bits.join(" · ");
+}
 function renderPageStrip(documentId, pageCount) {
   const strip = $("#page-strip");
   strip.hidden = pageCount <= 1;
@@ -548,10 +875,30 @@ function hideOverlay() {
   $("#overlay").hidden = true;
 }
 
+let progressTimer = null;
+
+function startProgress() {
+  const meta = $("#action-meta");
+  const started = performance.now();
+  const tick = () => {
+    const s = ((performance.now() - started) / 1000).toFixed(1);
+    meta.textContent = `Reading the document with OCR, then ${state.model || "the model"}… ${s}s`;
+    meta.className = "action-meta";
+  };
+  tick();
+  clearInterval(progressTimer);
+  progressTimer = setInterval(tick, 100);
+  return () => {
+    clearInterval(progressTimer);
+    progressTimer = null;
+    return (performance.now() - started) / 1000;
+  };
+}
+
 async function scrape() {
   if (state.busy) return;
   if (!state.documentId) { toast("Upload a document first.", "err"); return; }
-  const fields = collectFields();
+  const fields = currentFieldData();
   if (!fields.length) { toast("Add at least one field with a name.", "err"); return; }
 
   const duplicates = fields.map((f) => f.key.toLowerCase());
@@ -561,18 +908,16 @@ async function scrape() {
   }
 
   setBusy(true);
-  $("#action-meta").textContent = "Reading document with your local model…";
-  $("#action-meta").className = "action-meta";
+  const stopProgress = startProgress();
+  state.ocrStale = true;
 
   const body = {
     document_id: state.documentId,
     fields,
     model: state.model,
-    refresh: !!state.results,
   };
   state.lastRequest = body;
 
-  const started = performance.now();
   try {
     const res = await fetch("/api/scrape", {
       method: "POST",
@@ -584,19 +929,29 @@ async function scrape() {
 
     state.results = data;
     renderResults(data);
+    renderDiagnostics(data);
     renderRaw(body, data);
     markFieldStatuses(data);
+    updatePassFail();
     updateScrapeState();
 
-    const secs = ((performance.now() - started) / 1000).toFixed(1);
-    $("#action-meta").textContent = `Done in ${secs}s · avg confidence ${Math.round(data.average_confidence * 100)}%`;
+    // OCR has now run, so the viewer can show confidence and highlights.
+    await refreshOcr(data.document_id);
+
+    const secs = stopProgress();
+    const d = data.diagnostics || {};
+    $("#action-meta").textContent =
+      `Done in ${secs.toFixed(1)}s · OCR ${(d.ocr_ms / 1000).toFixed(1)}s · ` +
+      `model ${(d.llm_ms / 1000).toFixed(1)}s · avg confidence ` +
+      `${Math.round(data.average_confidence * 100)}%`;
     $("#action-meta").className = "action-meta ok";
-    toast(`Scraped ${data.fields.length} field${data.fields.length === 1 ? "" : "s"} in ${secs}s`, "ok");
+    toast(`Scraped ${data.fields.length} field${data.fields.length === 1 ? "" : "s"} in ${secs.toFixed(1)}s`, "ok");
 
     showTab("results");
     $("#result-count").hidden = false;
     $("#result-count").textContent = String(data.fields.length);
   } catch (err) {
+    stopProgress();
     $("#action-meta").textContent = err.message || "Scrape failed";
     $("#action-meta").className = "action-meta err";
     toast(err.message || "Scrape failed.", "err");
@@ -605,6 +960,110 @@ async function scrape() {
   }
 }
 
+async function refreshOcr(documentId) {
+  try {
+    const res = await fetch(`/api/documents/${documentId}/ocr`);
+    if (!res.ok) return;
+    state.ocr = await res.json();
+    state.ocrStale = false;
+    const meta = state.documentMeta || {};
+    state.documentMeta = {
+      ...meta,
+      pages: state.ocr.pages.length || meta.pages,
+      ocr_confidence: state.ocr.confidence,
+    };
+    updateDocMeta();
+  } catch {
+    /* highlights are a nicety; the scrape still stands */
+  }
+}
+
+function renderDiagnostics(data) {
+  const d = data.diagnostics || {};
+  const box = $("#diagnostics");
+  if (!d || !Object.keys(d).length) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+
+  const secs = (ms) => (ms == null ? "—" : `${(ms / 1000).toFixed(2)}s`);
+  const cells = [
+    ["Total", secs(d.total_ms)],
+    ["OCR", `${secs(d.ocr_ms)}${d.ocr_chars ? ` · ${d.ocr_chars} ch` : ""}`],
+    ["Model", secs(d.llm_ms), d.llm_ms > 20000 ? "warn" : ""],
+    ["Prompt", d.prompt_tokens ? `${d.prompt_tokens} tok` : `${d.prompt_chars || 0} ch`],
+    ["Output", d.output_tokens ? `${d.output_tokens} tok` : `${d.response_chars || 0} ch`],
+    ["Speed", d.tokens_per_second ? `${d.tokens_per_second} tok/s` : "—"],
+    ["Load", secs(d.load_ms)],
+    ["First token", secs(d.prompt_eval_ms)],
+    ["Attempts", d.attempts ?? "—", d.repaired ? "warn" : ""],
+    ["Thinking", d.think ? "on" : "off"],
+    ["Context", d.num_ctx ? `${d.num_ctx}` : "—"],
+    ["OCR conf.", d.ocr_confidence != null ? `${Math.round(d.ocr_confidence * 100)}%` : "—"],
+  ];
+
+  $("#diag-grid").innerHTML = cells
+    .map(([k, v, cls]) => `<div class="diag-cell ${cls || ""}"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(String(v))}</span></div>`)
+    .join("");
+
+  $("#diag-sub").textContent = `${data.model || "model"} · no cache, every run is real`;
+  $("#diag-steps").innerHTML = renderSteps(d, data);
+  $("#raw-response").textContent = data.raw_response || "(empty reply)";
+}
+
+// The extraction runs as a pipeline: a fast values-only pass, then, only for
+// fields whose value could not be found in the document, a careful pass.
+function renderSteps(d, data) {
+  const runs = d.runs || [];
+  if (!runs.length) return "";
+
+  const total = d.total_fields || 0;
+  const verified = d.verified == null ? total : d.verified;
+  const escalated = Math.max(0, total - verified);
+  const esc = runs.find((r) => r.stage === "verify");
+
+  const steps = [];
+
+  const first = runs.find((r) => r.stage === "fast") || runs[0];
+  steps.push(`
+    <div class="diag-step">
+      <span class="step-no">1</span>
+      <div class="step-body">
+        <div class="step-title">Read <span class="model-name">${escapeHtml(first.model || "")}</span> — values only</div>
+        <div class="step-meta">${first.fields ?? total} fields · ${first.output_tokens ?? "—"} tokens out</div>
+      </div>
+      <span class="step-time">${((first.wall_ms || 0) / 1000).toFixed(1)}s</span>
+    </div>`);
+
+  // Grounding: did we find each value in the document text?
+  const grounded = escalated
+    ? (esc ? `Escalating ${escalated} of ${total} fields` : `${escalated} of ${total} fields not found in the text`)
+    : "All values found in the document";
+  steps.push(`
+    <div class="diag-step ${escalated ? "escalate" : "held"}">
+      <span class="step-no">${escalated ? "!" : "✓"}</span>
+      <div class="step-body">
+        <div class="step-title">${grounded}</div>
+        <div class="step-meta">matched against the OCR text</div>
+      </div>
+      <span class="step-time">${verified}/${total}</span>
+    </div>`);
+
+  if (esc) {
+    steps.push(`
+      <div class="diag-step">
+        <span class="step-no">2</span>
+        <div class="step-body">
+          <div class="step-title">Step up to <span class="model-name">${escapeHtml(esc.model || "")}</span> — careful pass</div>
+          <div class="step-meta">only the ${esc.fields} unverified field${esc.fields === 1 ? "" : "s"} · ${esc.output_tokens ?? "—"} tokens out</div>
+        </div>
+        <span class="step-time">${((esc.wall_ms || 0) / 1000).toFixed(1)}s</span>
+      </div>`);
+  }
+
+  return steps.join("");
+}
 function markFieldStatuses(data) {
   const byKey = new Map(data.fields.map((f) => [f.key.toLowerCase(), f]));
   state.fields.forEach((f) => {
@@ -630,7 +1089,19 @@ function renderValue(value, type) {
   if (value === null) return { html: `<span class="null">not found</span>`, cls: "null" };
   if (Array.isArray(value)) {
     if (!value.length) return { html: `<span class="null">none found</span>`, cls: "null" };
-    const items = value.map((v) => `<li>${escapeHtml(String(v))}</li>`).join("");
+    // Structured rows (e.g. line items) read better as a small table.
+    if (value.every((v) => v && typeof v === "object" && !Array.isArray(v))) {
+      const cols = Object.keys(value[0]);
+      const head = cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+      const body = value
+        .map((row) => `<tr>${cols.map((c) => `<td>${escapeHtml(String(row[c] ?? ""))}</td>`).join("")}</tr>`)
+        .join("");
+      return {
+        html: `<div class="rc-table-wrap"><table class="rc-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`,
+        cls: "list",
+      };
+    }
+    const items = value.map((v) => `<li>${escapeHtml(typeof v === "object" ? JSON.stringify(v) : String(v))}</li>`).join("");
     return { html: `<ul style="margin:0;padding-left:18px;font-size:13.5px;font-weight:500">${items}</ul>`, cls: "list" };
   }
   if (typeof value === "object") {
@@ -706,6 +1177,14 @@ function updatePassFail() {
         <span class="conf-num">${conf}% confidence</span>
         ${f.evidence ? `<span class="rc-evidence" title="${escapeHtml(f.evidence)}">“${escapeHtml(f.evidence)}”</span>` : ""}
       </div>
+      ${
+        f.ocr_warning
+          ? `<div class="rc-ocr-warn" title="This value is based on text that may have been misread.">
+               <span class="rc-ocr-icon">!</span>
+               Double-check this value against the page
+             </div>`
+          : ""
+      }
     `;
   });
 
@@ -731,10 +1210,10 @@ function updatePassFail() {
   $("#score-title").textContent =
     rate === 1 ? "All fields passed" : rate === 0 ? "No fields passed" : "Some fields need a look";
   const missing = total - scored;
+  const d = data.diagnostics || {};
   $("#score-sub").textContent =
-    `≥${pct}% to pass · ${(data.llm_ms / 1000).toFixed(1)}s` +
-    (missing ? ` · ${missing} not found` : "") +
-    (data.cached ? " · cached" : "");
+    `≥${pct}% to pass · ${((d.total_ms || 0) / 1000).toFixed(1)}s` +
+    (missing ? ` · ${missing} not found` : "");
 }
 
 // ---------------------------------------------------------------- evidence highlight
@@ -987,11 +1466,22 @@ $("#threshold").addEventListener("input", () => {
 window.addEventListener("resize", debounce(applyZoom, 120));
 
 (async function boot() {
+  // Field presets are the union of every built-in template's fields, so Quick
+  // add always offers something useful regardless of the selected type.
+  await loadTemplates();
   renderPresets();
-  // A couple of starter fields so the app is immediately usable.
-  addField(PRESETS[0].data);
-  addField(PRESETS[2].data);
+
+  // Start on the invoice template: the most common thing people drop in.
+  if (templateCatalog.invoice) {
+    currentTemplate = "invoice";
+    renderTemplateOptions();
+    applyTemplateFields(fieldsFromTemplate(templateCatalog.invoice));
+  } else {
+    addField();
+  }
+
   updateScrapeState();
   checkHealth();
+  initRequests();
   setInterval(checkHealth, 30000);
 })();
