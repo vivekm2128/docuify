@@ -490,3 +490,5 @@ DOCUFY_LLM_URL=http://127.0.0.1:11434 python run.py   # terminal 2
 
 Documents are stored under `data/documents/` on your disk, and the model is
 local, so nothing is uploaded anywhere. Delete that folder to clear history.
+
+<!-- deploy-watch test marker -->
