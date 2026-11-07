@@ -8,3 +8,5 @@ samples/ui-*.png
 samples/sample-*.pdf
 samples/ui-*.png
 .DS_Store
+data/deploy-watch.log
+data/deploy-incidents/
