@@ -522,8 +522,18 @@ function confirmReplace(fields) {
 $("#template-select").addEventListener("change", (e) => {
   const id = e.target.value;
   if (id === "custom") {
+    // Custom means "start empty". Without this the previous template's fields
+    // stayed on screen, so a blank slate was impossible to reach. Guard the
+    // clear rather than silently wiping work already typed in.
+    const kept = collectFields().length > 0;
+    if (kept && !window.confirm("Start from an empty field list? Your current fields will be cleared.")) {
+      e.target.value = currentTemplate || "custom";
+      return;
+    }
     currentTemplate = "custom";
+    if (kept) applyTemplateFields([]);
     syncTemplateControls();
+    toast(kept ? "Field list cleared — add your own fields" : "Custom — add your own fields", "ok");
     return;
   }
   const t = templateCatalog[id];
